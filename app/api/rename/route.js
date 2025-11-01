@@ -36,7 +36,7 @@ ${snippet ? "Snippet (may be truncated):\n" + snippet.slice(0, 2000) : ""}`;
       raw = resp?.choices?.[0]?.message?.content || "Untitled";
     } else if(provider === "Gemini"){
       const genAI = new GoogleGenerativeAI(key);
-      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+      const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
       const r = await model.generateContent(prompt);
       raw = r?.response?.text?.() || "Untitled";
     } else {
