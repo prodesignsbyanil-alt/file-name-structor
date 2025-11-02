@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
+// validate রুটের মতোই model picker
 async function pickGeminiModel(key) {
   try {
     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
@@ -11,17 +12,27 @@ async function pickGeminiModel(key) {
     const data = await res.json();
     const names = (data.models || []).map(m => m.name);
 
-    const prefer = [
+    const preferExact = [
       "models/gemini-1.5-flash-latest",
       "models/gemini-1.5-flash-001",
       "models/gemini-1.5-flash",
       "models/gemini-1.5-flash-8b",
+      "models/gemini-2.0-flash",
+      "models/gemini-2.0-flash-lite",
+      "models/gemini-2.0-flash-exp",
+      "models/gemini-1.5-pro",
+      "models/gemini-2.0-pro",
     ];
-    for (const want of prefer) {
+    for (const want of preferExact) {
       if (names.includes(want)) return want.replace("models/", "");
     }
-    const anyFlash = names.find(n => n.includes("gemini-1.5-flash"));
+
+    const anyFlash = names.find(n => /gemini-(1\.5|2\.0)-flash/.test(n));
     if (anyFlash) return anyFlash.replace("models/", "");
+
+    const anyPro = names.find(n => /gemini-(1\.5|2\.0)-pro/.test(n));
+    if (anyPro) return anyPro.replace("models/", "");
+
     return null;
   } catch {
     return "gemini-1.5-flash-latest";
@@ -29,7 +40,7 @@ async function pickGeminiModel(key) {
 }
 
 export async function POST(req){
-  try {
+  try{
     const form = await req.formData();
     const file = form.get("file");
     const key  = form.get("key");
@@ -74,6 +85,7 @@ ${snippet ? "Snippet (may be truncated):\\n" + snippet.slice(0, 2000) : ""}`;
     } else if (provider === "Gemini") {
       const modelId = await pickGeminiModel(key);
       if (!modelId) return NextResponse.json({ error:"Gemini: no compatible model available for this key/project." }, { status:404 });
+
       const genAI = new GoogleGenerativeAI(key);
       const model = genAI.getGenerativeModel({ model: modelId });
       const r = await model.generateContent(prompt);
