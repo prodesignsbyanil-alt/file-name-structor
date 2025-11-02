@@ -20,18 +20,15 @@ function wordsOnly(s) {
 
 // 12–15 শব্দ, কেবল লেটার, একক স্পেস, Title Case
 function normalizeTo12to15(raw, hints = []) {
-  // মূল টেক্সট থেকে শব্দ + হিন্ট থেকে শব্দ
   const base = wordsOnly(raw);
   const hintWords = hints.flatMap(h => wordsOnly(h));
 
-  // ডুপ্লিকেট সরিয়ে অর্ডার রাখি
   const out = [];
   const seen = new Set();
-  for (const w of [...base]) {
+  for (const w of base) {
     if (!seen.has(w)) { seen.add(w); out.push(w); }
   }
 
-  // fallback থেকে পূরণ করি
   const fallback = Array.from(new Set([
     ...hintWords,
     "vector","design","graphic","illustration","element","silhouette","icon",
@@ -40,13 +37,9 @@ function normalizeTo12to15(raw, hints = []) {
   ])).filter(Boolean);
 
   let i = 0;
-  while (out.length < 12) {
-    out.push(fallback[i % fallback.length] || "design");
-    i++;
-  }
+  while (out.length < 12) { out.push(fallback[i % fallback.length] || "design"); i++; }
   if (out.length > 15) out.length = 15;
 
-  // Title Case + single space
   const titled = out.map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ").trim();
   return titled || "Untitled";
 }
@@ -84,6 +77,9 @@ export default function Home() {
   // প্রতি কার্ডের স্ট্যাটাস + লুপ স্টেট রেফ
   const [statusMap, setStatusMap] = useState({}); // { [idx]: {state:'ok'|'pending'|'error', msg?:string} }
   const runningRef = useRef(false);
+
+  // Clear বাটনের জন্য ফাইল ইনপুট রেফ
+  const fileInputRef = useRef(null);
 
   const used = useRef(new Set());
 
@@ -155,7 +151,7 @@ export default function Home() {
     const data = await res.json();
     if (data?.error) throw new Error(data.error);
 
-    // ✅ 12–15 words + only letters + single space + Title Case + unique
+    // 12–15 words + only letters + single space + Title Case + unique
     let s = normalizeTo12to15(data?.newName || "Untitled", [file.name]);
     s = uniqTitle(s, used.current);
 
@@ -206,7 +202,29 @@ export default function Home() {
   }
 
   function stop() { setRunning(false); runningRef.current = false; setPaused(false); }
+
   function togglePause() { if (!runningRef.current) return; setPaused(p => !p); }
+
+  // ✅ Clear: সব রিসেট + ইনপুটও খালি
+  function clearAll(){
+    setRunning(false);
+    runningRef.current = false;
+    setPaused(false);
+
+    try { previews.forEach(p => URL.revokeObjectURL(p.url)); } catch {}
+
+    setFiles([]);
+    setPreviews([]);
+    setRenamedMap({});
+    setProgress(0);
+    setRenamedCount(0);
+    setStatusMap({});
+    used.current = new Set();
+
+    if (fileInputRef.current) fileInputRef.current.value = "";
+
+    toast.success("Cleared. You can import new files now.");
+  }
 
   async function exportZip() {
     if (!Object.keys(renamedMap).length) return toast.error("Nothing to export.");
@@ -261,9 +279,17 @@ export default function Home() {
             <input type="password" placeholder="API Key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} className="border rounded px-3 py-1 w-64" />
             <button onClick={saveKey} className="px-3 py-1.5 rounded bg-green-600 text-white text-sm">Save Key</button>
 
-            <div className="ml-auto flex items中心 gap-3">
+            <div className="ml-auto flex items-center gap-3">
               <label className="text-sm font-medium">Input Folder:</label>
-              <input type="file" webkitdirectory="true" directory="true" multiple onChange={handleImport} className="text-sm" />
+              <input
+                type="file"
+                webkitdirectory="true"
+                directory="true"
+                multiple
+                onChange={handleImport}
+                className="text-sm"
+                ref={fileInputRef}
+              />
             </div>
           </div>
         </section>
@@ -272,9 +298,15 @@ export default function Home() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="text-sm"><span className="font-semibold">{renamedCount}</span> / {files.length} files renamed — {progress}%</div>
             <div className="flex items-center gap-2">
-              {!running ? <button onClick={start} className="px-4 py-2 rounded bg-indigo-600 text-white">Start Structor</button> : <button onClick={stop} className="px-4 py-2 rounded bg-yellow-600 text-white">Stop</button>}
+              {!running ? (
+                <button onClick={start} className="px-4 py-2 rounded bg-indigo-600 text-white">Start Structor</button>
+              ) : (
+                <button onClick={stop} className="px-4 py-2 rounded bg-yellow-600 text-white">Stop</button>
+              )}
               <button onClick={togglePause} disabled={!running} className={`px-4 py-2 rounded text-white ${paused ? "bg-green-600" : "bg-gray-700"}`}>{paused ? "Resume" : "Pause"}</button>
               <button onClick={exportZip} className="px-4 py-2 rounded bg-emerald-600 text-white">Export ZIP</button>
+              {/* ✅ নতুন Clear বাটন */}
+              <button onClick={clearAll} className="px-4 py-2 rounded bg-rose-600 text-white">Clear</button>
             </div>
           </div>
           <div className="h-3 bg-gray-200 rounded mt-3"><div className="h-3 bg-indigo-500 rounded" style={{ width: `${progress}%` }} /></div>
