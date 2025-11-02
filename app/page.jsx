@@ -13,9 +13,18 @@ const isVector = (f) => [".svg", ".eps", ".ai"].some(ext => f.name.toLowerCase()
    Naming helpers (strict)
    ======================= */
 
+// generic/banned words we don't want in titles
+const BANNED = new Set([
+  "abstract","vector","graphic","design","element","elements","shape","shapes",
+  "illustration","illustrations","template","icon","icons","stock","bundle",
+  "collection","file","pattern","patterns"
+]);
+
 // শুধু লেটার-ওয়ার্ড (A–Z) বের করি
 function wordsOnly(s) {
-  return (String(s || "").match(/[A-Za-z]+/g) || []).map(w => w.toLowerCase());
+  return (String(s || "").match(/[A-Za-z]+/g) || [])
+    .map(w => w.toLowerCase())
+    .filter(w => !BANNED.has(w));
 }
 
 // 12–15 শব্দ, কেবল লেটার, একক স্পেস, Title Case
@@ -31,14 +40,13 @@ function normalizeTo12to15(raw, hints = []) {
 
   const fallback = Array.from(new Set([
     ...hintWords,
-    "vector","design","graphic","illustration","element","silhouette","icon",
-    "decorative","ornamental","art","bundle","collection","stock","template",
-    "pattern","abstract","floral","nature","animal"
+    "winter","snow","family","people","outdoors","silhouette",
+    "scene","landscape","nature","festival","holiday","night","sky","forest","mountain"
   ])).filter(Boolean);
 
   let i = 0;
-  while (out.length < 5) { out.push(fallback[i % fallback.length] || "design"); i++; }
-  if (out.length > 8) out.length = 8;
+  while (out.length < 12) { out.push(fallback[i % fallback.length] || "nature"); i++; }
+  if (out.length > 15) out.length = 15;
 
   const titled = out.map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ").trim();
   return titled || "Untitled";
@@ -54,11 +62,32 @@ function uniqTitle(base, used) {
     let k = i, suf = "";
     do { suf = abc[k % 26] + suf; k = Math.floor(k / 26) - 1; } while (k >= 0);
     let candidate;
-    if (words.length >= 8) candidate = [...words.slice(0, 7), suf].join(" ");
+    if (words.length >= 15) candidate = [...words.slice(0, 14), suf].join(" ");
     else candidate = base + " " + suf;
     if (!used.has(candidate)) { used.add(candidate); return candidate; }
     i++;
   }
+}
+
+/* =======================
+   Rasterize SVG preview → PNG dataURL
+   ======================= */
+async function rasterizeToPNG(url, max = 512) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.max(img.width, img.height) / max || 1;
+      const w = Math.round(img.width / scale);
+      const h = Math.round(img.height / scale);
+      const c = document.createElement("canvas");
+      c.width = w; c.height = h;
+      const ctx = c.getContext("2d");
+      ctx.drawImage(img, 0, 0, w, h);
+      try { resolve(c.toDataURL("image/png", 0.92)); } catch (e) { reject(e); }
+    };
+    img.onerror = reject;
+    img.src = url; // previews[idx].url (objectURL)
+  });
 }
 
 export default function Home() {
@@ -66,6 +95,7 @@ export default function Home() {
   const [emailInput, setEmailInput] = useState("");
   const [provider, setProvider] = useState("OpenAI");
   const [apiKey, setApiKey] = useState("");
+  const [showKey, setShowKey] = useState(false); // 👁️ eye toggle
   const [files, setFiles] = useState([]);
   const [previews, setPreviews] = useState([]);
   const [renamedMap, setRenamedMap] = useState({});
@@ -132,7 +162,7 @@ export default function Home() {
     toast.success(`${sel.length} files imported.`);
   }
 
-  // API কল + ক্লায়েন্ট-সাইড strict ফরম্যাটিং
+  // API কল + ক্লায়েন্ট-সাইড strict ফরম্যাটিং (+ image preview)
   async function renameOne(i) {
     const file = files[i]; if (!file) return null;
 
@@ -142,6 +172,14 @@ export default function Home() {
     fd.append("file", file);
     fd.append("key", apiKey);
     fd.append("provider", provider);
+
+    // SVG হলে PNG প্রিভিউ পাঠাই (মডেলকে কনটেন্ট দেখাতে)
+    try {
+      if (isSVG(file) && previews[i]?.url) {
+        const png = await rasterizeToPNG(previews[i].url, 512);
+        if (png) fd.append("preview", png); // data:image/png;base64,...
+      }
+    } catch { /* ignore preview errors */ }
 
     const res = await fetch("/api/rename", { method: "POST", body: fd });
     if (!res.ok) {
@@ -202,7 +240,6 @@ export default function Home() {
   }
 
   function stop() { setRunning(false); runningRef.current = false; setPaused(false); }
-
   function togglePause() { if (!runningRef.current) return; setPaused(p => !p); }
 
   // ✅ Clear: সব রিসেট + ইনপুটও খালি
@@ -276,8 +313,46 @@ export default function Home() {
               <option value="Gemini">Gemini</option>
             </select>
 
-            <input type="password" placeholder="API Key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} className="border rounded px-3 py-1 w-64" />
-            <button onClick={saveKey} className="px-3 py-1.5 rounded bg-green-600 text-white text-sm">Save Key</button>
+            {/* API Key + Eye toggle + Save */}
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <input
+                  type={showKey ? "text" : "password"}
+                  placeholder="API Key"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  className="border rounded pl-3 pr-10 py-1 w-64"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowKey(s => !s)}
+                  aria-label={showKey ? "Hide API key" : "Show API key"}
+                  title={showKey ? "Hide API key" : "Show API key"}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700"
+                >
+                  {showKey ? (
+                    /* eye-off */
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M3 3l18 18" />
+                      <path d="M10.58 10.58A3 3 0 0012 15a3 3 0 002.42-4.42" />
+                      <path d="M5.12 5.12C3.14 6.46 1.84 8.35 1 10c1.6 3.2 6 7 11 7 1.2 0 2.36-.2 3.44-.58" />
+                    </svg>
+                  ) : (
+                    /* eye */
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" />
+                      <circle cx="12" cy="12" r="3" />
+                    </svg>
+                  )}
+                </button>
+              </div>
+
+              <button onClick={saveKey} className="px-3 py-1.5 rounded bg-green-600 text-white text-sm">
+                Save Key
+              </button>
+            </div>
 
             <div className="ml-auto flex items-center gap-3">
               <label className="text-sm font-medium">Input Folder:</label>
@@ -305,7 +380,6 @@ export default function Home() {
               )}
               <button onClick={togglePause} disabled={!running} className={`px-4 py-2 rounded text-white ${paused ? "bg-green-600" : "bg-gray-700"}`}>{paused ? "Resume" : "Pause"}</button>
               <button onClick={exportZip} className="px-4 py-2 rounded bg-emerald-600 text-white">Export ZIP</button>
-              {/* ✅ নতুন Clear বাটন */}
               <button onClick={clearAll} className="px-4 py-2 rounded bg-rose-600 text-white">Clear</button>
             </div>
           </div>
