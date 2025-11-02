@@ -13,46 +13,41 @@ const isVector = (f) => [".svg", ".eps", ".ai"].some(ext => f.name.toLowerCase()
    Naming helpers (strict)
    ======================= */
 
-// generic/banned words we don't want in titles
+// generic/banned words আমরা চাই না টাইটেলে থাকুক
 const BANNED = new Set([
   "abstract","vector","graphic","design","element","elements","shape","shapes",
   "illustration","illustrations","template","icon","icons","stock","bundle",
   "collection","file","pattern","patterns"
 ]);
 
-// শুধু লেটার-ওয়ার্ড (A–Z) বের করি
+// শুধু লেটার-ওয়ার্ড (A–Z) কলে‌ক্ট করি + banned বাদ
 function wordsOnly(s) {
   return (String(s || "").match(/[A-Za-z]+/g) || [])
     .map(w => w.toLowerCase())
     .filter(w => !BANNED.has(w));
 }
 
-// 12–15 শব্দ, কেবল লেটার, একক স্পেস, Title Case
-function normalizeTo12to15(raw, hints = []) {
-  const base = wordsOnly(raw);
-  const hintWords = hints.flatMap(h => wordsOnly(h));
-
+// ✅ ৫–৮ শব্দ, sentence case, কোনো fallback যোগ নয়
+function normalizeTo5to8(raw, hints = []) {
+  // মডেল আউটপুট + হিন্ট (ফাইলনেম) একত্রে, ডুপ্লিকেট বাদ
+  const merged = [...wordsOnly(raw), ...hints.flatMap(wordsOnly)];
   const out = [];
   const seen = new Set();
-  for (const w of base) {
+  for (const w of merged) {
     if (!seen.has(w)) { seen.add(w); out.push(w); }
   }
 
-  const fallback = Array.from(new Set([
-    ...hintWords,
-    "winter","snow","family","people","outdoors","silhouette",
-    "scene","landscape","nature","festival","holiday","night","sky","forest","mountain"
-  ])).filter(Boolean);
+  // সর্বোচ্চ ৮, কম হলে যেমন আছে তেমন — কোনো শব্দ বাড়ানো হবে না
+  const trimmed = out.slice(0, 8);
+  if (trimmed.length === 0) return "Untitled";
 
-  let i = 0;
-  while (out.length < 12) { out.push(fallback[i % fallback.length] || "nature"); i++; }
-  if (out.length > 15) out.length = 15;
-
-  const titled = out.map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ").trim();
-  return titled || "Untitled";
+  // Sentence case
+  const lower = trimmed.map(w => w.toLowerCase());
+  lower[0] = lower[0].charAt(0).toUpperCase() + lower[0].slice(1);
+  return lower.join(" ");
 }
 
-// নাম ইউনিক করতে suffix (a,b,c...) বসাই; 15-শব্দ সীমা মেনে
+// ✅ ইউনিক করতে suffix (a,b,c...) — ৮ শব্দ সীমা মানবে
 function uniqTitle(base, used) {
   if (!used.has(base)) { used.add(base); return base; }
   const abc = "abcdefghijklmnopqrstuvwxyz";
@@ -61,9 +56,9 @@ function uniqTitle(base, used) {
   while (true) {
     let k = i, suf = "";
     do { suf = abc[k % 26] + suf; k = Math.floor(k / 26) - 1; } while (k >= 0);
-    let candidate;
-    if (words.length >= 15) candidate = [...words.slice(0, 14), suf].join(" ");
-    else candidate = base + " " + suf;
+    // ৮ শব্দের মধ্যে suffix বসাই
+    const candidate = (words.length >= 8) ? [...words.slice(0, 7), suf].join(" ")
+                                         : (base + " " + suf);
     if (!used.has(candidate)) { used.add(candidate); return candidate; }
     i++;
   }
@@ -189,8 +184,8 @@ export default function Home() {
     const data = await res.json();
     if (data?.error) throw new Error(data.error);
 
-    // 12–15 words + only letters + single space + Title Case + unique
-    let s = normalizeTo12to15(data?.newName || "Untitled", [file.name]);
+    // ✅ ৫–৮ শব্দ + sentence case + ইউনিক
+    let s = normalizeTo5to8(data?.newName || "Untitled", [file.name]);
     s = uniqTitle(s, used.current);
 
     setRenamedMap(m => ({ ...m, [i]: s }));
@@ -269,7 +264,7 @@ export default function Home() {
     const zip = new JSZip();
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
-      const base = renamedMap[i] || normalizeTo12to15(f.name.replace(/\.[^.]+$/, ""));
+      const base = renamedMap[i] || normalizeTo5to8(f.name.replace(/\.[^.]+$/, ""));
       const ext = f.name.split(".").pop();
       const newName = `${base}.${ext}`;
       const buf = await f.arrayBuffer();
