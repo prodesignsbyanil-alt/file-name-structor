@@ -37,8 +37,8 @@ function normalizeTo12to15(raw, hints = []) {
   ])).filter(Boolean);
 
   let i = 0;
-  while (out.length < 12) { out.push(fallback[i % fallback.length] || "design"); i++; }
-  if (out.length > 15) out.length = 15;
+  while (out.length < 5) { out.push(fallback[i % fallback.length] || "design"); i++; }
+  if (out.length > 8) out.length = 8;
 
   const titled = out.map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ").trim();
   return titled || "Untitled";
@@ -54,7 +54,7 @@ function uniqTitle(base, used) {
     let k = i, suf = "";
     do { suf = abc[k % 26] + suf; k = Math.floor(k / 26) - 1; } while (k >= 0);
     let candidate;
-    if (words.length >= 15) candidate = [...words.slice(0, 14), suf].join(" ");
+    if (words.length >= 8) candidate = [...words.slice(0, 7), suf].join(" ");
     else candidate = base + " " + suf;
     if (!used.has(candidate)) { used.add(candidate); return candidate; }
     i++;
