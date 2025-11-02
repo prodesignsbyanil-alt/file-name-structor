@@ -8,20 +8,62 @@ import { subscribeAuth, loginWithEmail, logout, isValidEmail } from "@/lib/auth-
 
 const isSVG = (f) => f.type === "image/svg+xml" || f.name.toLowerCase().endsWith(".svg");
 const isVector = (f) => [".svg", ".eps", ".ai"].some(ext => f.name.toLowerCase().endsWith(ext));
-const lettersOnly = (s) => (s || "").replace(/[^A-Za-z]/g, "") || "Untitled";
-function uniq(base, used) {
-  let n = base;
-  if (!used.has(n)) {
-    used.add(n);
-    return n;
+
+/* =======================
+   Naming helpers (strict)
+   ======================= */
+
+// শুধু লেটার-ওয়ার্ড (A–Z) বের করি
+function wordsOnly(s) {
+  return (String(s || "").match(/[A-Za-z]+/g) || []).map(w => w.toLowerCase());
+}
+
+// 12–15 শব্দ, কেবল লেটার, একক স্পেস, Title Case
+function normalizeTo12to15(raw, hints = []) {
+  // মূল টেক্সট থেকে শব্দ + হিন্ট থেকে শব্দ
+  const base = wordsOnly(raw);
+  const hintWords = hints.flatMap(h => wordsOnly(h));
+
+  // ডুপ্লিকেট সরিয়ে অর্ডার রাখি
+  const out = [];
+  const seen = new Set();
+  for (const w of [...base]) {
+    if (!seen.has(w)) { seen.add(w); out.push(w); }
   }
+
+  // fallback থেকে পূরণ করি
+  const fallback = Array.from(new Set([
+    ...hintWords,
+    "vector","design","graphic","illustration","element","silhouette","icon",
+    "decorative","ornamental","art","bundle","collection","stock","template",
+    "pattern","abstract","floral","nature","animal"
+  ])).filter(Boolean);
+
+  let i = 0;
+  while (out.length < 12) {
+    out.push(fallback[i % fallback.length] || "design");
+    i++;
+  }
+  if (out.length > 15) out.length = 15;
+
+  // Title Case + single space
+  const titled = out.map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ").trim();
+  return titled || "Untitled";
+}
+
+// নাম ইউনিক করতে suffix (a,b,c...) বসাই; 15-শব্দ সীমা মেনে
+function uniqTitle(base, used) {
+  if (!used.has(base)) { used.add(base); return base; }
   const abc = "abcdefghijklmnopqrstuvwxyz";
+  const words = base.trim().split(/\s+/);
   let i = 0;
   while (true) {
-    let k = i, s = "";
-    do { s = abc[k % 26] + s; k = Math.floor(k / 26) - 1; } while (k >= 0);
-    const c = base + s;
-    if (!used.has(c)) { used.add(c); return c; }
+    let k = i, suf = "";
+    do { suf = abc[k % 26] + suf; k = Math.floor(k / 26) - 1; } while (k >= 0);
+    let candidate;
+    if (words.length >= 15) candidate = [...words.slice(0, 14), suf].join(" ");
+    else candidate = base + " " + suf;
+    if (!used.has(candidate)) { used.add(candidate); return candidate; }
     i++;
   }
 }
@@ -39,19 +81,19 @@ export default function Home() {
   const [running, setRunning] = useState(false);
   const [paused, setPaused] = useState(false);
 
-  // ✅ নতুন: প্রতিটি আইটেমের স্ট্যাটাস + লুপ স্টেট রেফ
+  // প্রতি কার্ডের স্ট্যাটাস + লুপ স্টেট রেফ
   const [statusMap, setStatusMap] = useState({}); // { [idx]: {state:'ok'|'pending'|'error', msg?:string} }
   const runningRef = useRef(false);
 
   const used = useRef(new Set());
 
   useEffect(() => { const unsub = subscribeAuth(setUser); return () => { if (typeof unsub === 'function') unsub(); }; }, []);
-  useEffect(() => { try { setApiKey(localStorage.getItem(`fns:key:${provider}`) || ""); } catch { } }, [provider]);
+  useEffect(() => { try { setApiKey(localStorage.getItem(`fns:key:${provider}`) || ""); } catch {} }, [provider]);
   useEffect(() => () => { previews.forEach(p => URL.revokeObjectURL(p.url)); }, [previews]);
   useEffect(() => {
     function onErr(e) {
       const m = (e?.error && e.error.message) || e?.message || "Client error";
-      try { console.error(e); } catch { }
+      try { console.error(e); } catch {}
       toast.error(m);
     }
     window.addEventListener("error", onErr);
@@ -75,7 +117,6 @@ export default function Home() {
     const data = await res.json();
     if (data.ok) {
       localStorage.setItem(`fns:key:${provider}`, apiKey);
-      // ✅ Gemini হলে কোন মডেল ব্যবহার হচ্ছে দেখাবে
       toast.success(`API key saved!${data.model ? " Model: " + data.model : ""}`);
     } else {
       toast.error(data.error || "Invalid key");
@@ -95,11 +136,10 @@ export default function Home() {
     toast.success(`${sel.length} files imported.`);
   }
 
-  // ✅ শক্ত renameOne — HTTP/JSON এরর ধরবে + স্ট্যাটাস সেট করবে
+  // API কল + ক্লায়েন্ট-সাইড strict ফরম্যাটিং
   async function renameOne(i) {
     const file = files[i]; if (!file) return null;
 
-    // UI status: running
     setStatusMap(m => ({ ...m, [i]: { state: "pending" } }));
 
     const fd = new FormData();
@@ -108,22 +148,20 @@ export default function Home() {
     fd.append("provider", provider);
 
     const res = await fetch("/api/rename", { method: "POST", body: fd });
-
     if (!res.ok) {
       const txt = await res.text();
       throw new Error(`HTTP ${res.status} ${res.statusText} — ${txt.slice(0, 200)}`);
     }
-
     const data = await res.json();
     if (data?.error) throw new Error(data.error);
 
-    let s = lettersOnly(data?.newName || "Untitled");
-    s = uniq(s, used.current);
+    // ✅ 12–15 words + only letters + single space + Title Case + unique
+    let s = normalizeTo12to15(data?.newName || "Untitled", [file.name]);
+    s = uniqTitle(s, used.current);
 
     setRenamedMap(m => ({ ...m, [i]: s }));
     setRenamedCount(c => c + 1);
     setStatusMap(m => ({ ...m, [i]: { state: "ok" } }));
-
     return s;
   }
 
@@ -176,7 +214,7 @@ export default function Home() {
     const zip = new JSZip();
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
-      const base = renamedMap[i] || lettersOnly(f.name.replace(/\.[^.]+$/, ""));
+      const base = renamedMap[i] || normalizeTo12to15(f.name.replace(/\.[^.]+$/, ""));
       const ext = f.name.split(".").pop();
       const newName = `${base}.${ext}`;
       const buf = await f.arrayBuffer();
@@ -223,7 +261,7 @@ export default function Home() {
             <input type="password" placeholder="API Key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} className="border rounded px-3 py-1 w-64" />
             <button onClick={saveKey} className="px-3 py-1.5 rounded bg-green-600 text-white text-sm">Save Key</button>
 
-            <div className="ml-auto flex items-center gap-3">
+            <div className="ml-auto flex items中心 gap-3">
               <label className="text-sm font-medium">Input Folder:</label>
               <input type="file" webkitdirectory="true" directory="true" multiple onChange={handleImport} className="text-sm" />
             </div>
@@ -265,7 +303,6 @@ export default function Home() {
                     New: {(renamedMap[idx] ? renamedMap[idx] : "—") + (renamedMap[idx] ? "." + f.name.split(".").pop() : "")}
                   </div>
 
-                  {/* ✅ স্ট্যাটাস দেখানো */}
                   {statusMap[idx]?.state === "pending" && (
                     <div className="text-[11px] text-amber-600">Renaming…</div>
                   )}
