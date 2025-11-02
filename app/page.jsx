@@ -13,41 +13,63 @@ const isVector = (f) => [".svg", ".eps", ".ai"].some(ext => f.name.toLowerCase()
    Naming helpers (strict)
    ======================= */
 
-// generic/banned words আমরা চাই না টাইটেলে থাকুক
+// এমন সব শব্দ যেগুলো টাইটেলে থাকতে চাই না
 const BANNED = new Set([
-  "abstract","vector","graphic","design","element","elements","shape","shapes",
-  "illustration","illustrations","template","icon","icons","stock","bundle",
-  "collection","file","pattern","patterns"
+  // টাইপ/ফাইল/টেক
+  "xml","version","svg","eps","ai","file","files","format",
+  // জেনেরিক আর্ট/ডিজাইন/কম্পোজিশন
+  "art","artwork","image","images","graphic","graphics","vector","design",
+  "element","elements","shape","shapes","illustration","illustrations",
+  "template","templates","icon","icons","stock","bundle","collection",
+  "pattern","patterns","composition","compositions","layout","background",
+  // ফাঁপা শব্দ
+  "modern","clean","decorative","new","create","creating","created","colors","color","palette"
 ]);
 
-// শুধু লেটার-ওয়ার্ড (A–Z) কলে‌ক্ট করি + banned বাদ
+// খুব সাধারণ স্টপওয়ার্ড—টাইটেলে দরকার নেই
+const STOP = new Set([
+  "and","with","the","a","an","for","to","of","in","on","by","from","at","this","that","these","those","is","are","be"
+]);
+
+// শুধু লেটার-ওয়ার্ড রেখে (A–Z), banned/stop বাদ
 function wordsOnly(s) {
   return (String(s || "").match(/[A-Za-z]+/g) || [])
     .map(w => w.toLowerCase())
-    .filter(w => !BANNED.has(w));
+    .filter(w => !BANNED.has(w) && !STOP.has(w));
 }
 
-// ✅ ৫–৮ শব্দ, sentence case, কোনো fallback যোগ নয়
+// ✅ ৫–৮ শব্দ, sentence case (শুধু প্রথম শব্দ ক্যাপিটাল), কোনো generic fallback নয়
+// কেবল: মডেলের টেক্সট + filename hint থেকে শব্দ নিয়ে বানাবে
 function normalizeTo5to8(raw, hints = []) {
-  // মডেল আউটপুট + হিন্ট (ফাইলনেম) একত্রে, ডুপ্লিকেট বাদ
   const merged = [...wordsOnly(raw), ...hints.flatMap(wordsOnly)];
+
+  // ইউনিক অর্ডারড সেট
   const out = [];
   const seen = new Set();
   for (const w of merged) {
     if (!seen.has(w)) { seen.add(w); out.push(w); }
   }
 
-  // সর্বোচ্চ ৮, কম হলে যেমন আছে তেমন — কোনো শব্দ বাড়ানো হবে না
-  const trimmed = out.slice(0, 8);
-  if (trimmed.length === 0) return "Untitled";
+  // ৫–৮ সীমা (কোনো জেনেরিক শব্দ যোগ নয়)
+  let words = out.slice(0, 8);
+  // যদি ৫-এর কম হয়, hints থেকেই বাড়ানোর চেষ্টা (আবার generic নয়)
+  if (words.length < 5) {
+    const more = hints.flatMap(wordsOnly).filter(w => !seen.has(w));
+    for (const w of more) {
+      words.push(w);
+      if (words.length >= 5) break;
+    }
+  }
 
-  // Sentence case
-  const lower = trimmed.map(w => w.toLowerCase());
-  lower[0] = lower[0].charAt(0).toUpperCase() + lower[0].slice(1);
-  return lower.join(" ");
+  if (words.length === 0) return "Untitled";
+
+  // sentence case
+  words = words.map(w => w.toLowerCase());
+  words[0] = words[0].charAt(0).toUpperCase() + words[0].slice(1);
+  return words.join(" ");
 }
 
-// ✅ ইউনিক করতে suffix (a,b,c...) — ৮ শব্দ সীমা মানবে
+// ✅ ইউনিক করতে suffix (a,b,c...)—৮ শব্দ সীমার ভেতরে
 function uniqTitle(base, used) {
   if (!used.has(base)) { used.add(base); return base; }
   const abc = "abcdefghijklmnopqrstuvwxyz";
@@ -56,7 +78,6 @@ function uniqTitle(base, used) {
   while (true) {
     let k = i, suf = "";
     do { suf = abc[k % 26] + suf; k = Math.floor(k / 26) - 1; } while (k >= 0);
-    // ৮ শব্দের মধ্যে suffix বসাই
     const candidate = (words.length >= 8) ? [...words.slice(0, 7), suf].join(" ")
                                          : (base + " " + suf);
     if (!used.has(candidate)) { used.add(candidate); return candidate; }
@@ -90,7 +111,7 @@ export default function Home() {
   const [emailInput, setEmailInput] = useState("");
   const [provider, setProvider] = useState("OpenAI");
   const [apiKey, setApiKey] = useState("");
-  const [showKey, setShowKey] = useState(false); // 👁️ eye toggle
+  const [showKey, setShowKey] = useState(false); // 👁️
   const [files, setFiles] = useState([]);
   const [previews, setPreviews] = useState([]);
   const [renamedMap, setRenamedMap] = useState({});
@@ -99,16 +120,12 @@ export default function Home() {
   const [running, setRunning] = useState(false);
   const [paused, setPaused] = useState(false);
 
-  // প্রতি কার্ডের স্ট্যাটাস + লুপ স্টেট রেফ
   const [statusMap, setStatusMap] = useState({}); // { [idx]: {state:'ok'|'pending'|'error', msg?:string} }
   const runningRef = useRef(false);
-
-  // Clear বাটনের জন্য ফাইল ইনপুট রেফ
   const fileInputRef = useRef(null);
-
   const used = useRef(new Set());
 
-  useEffect(() => { const unsub = subscribeAuth(setUser); return () => { if (typeof unsub === 'function') unsub(); }; }, []);
+  useEffect(() => { const unsub = subscribeAuth(setUser); return () => { if (typeof unsub === "function") unsub(); }; }, []);
   useEffect(() => { try { setApiKey(localStorage.getItem(`fns:key:${provider}`) || ""); } catch {} }, [provider]);
   useEffect(() => () => { previews.forEach(p => URL.revokeObjectURL(p.url)); }, [previews]);
   useEffect(() => {
@@ -168,7 +185,7 @@ export default function Home() {
     fd.append("key", apiKey);
     fd.append("provider", provider);
 
-    // SVG হলে PNG প্রিভিউ পাঠাই (মডেলকে কনটেন্ট দেখাতে)
+    // SVG হলে PNG প্রিভিউ পাঠাই (মডেলকে ভিজ্যুয়াল কনটেন্ট দেখাতে)
     try {
       if (isSVG(file) && previews[i]?.url) {
         const png = await rasterizeToPNG(previews[i].url, 512);
@@ -184,7 +201,7 @@ export default function Home() {
     const data = await res.json();
     if (data?.error) throw new Error(data.error);
 
-    // ✅ ৫–৮ শব্দ + sentence case + ইউনিক
+    // ৫–৮ শব্দ + sentence case + ইউনিক
     let s = normalizeTo5to8(data?.newName || "Untitled", [file.name]);
     s = uniqTitle(s, used.current);
 
@@ -210,20 +227,16 @@ export default function Home() {
 
     for (let i = 0; i < files.length; i++) {
       if (!runningRef.current) break;
-
       while (paused) {
         await new Promise(r => setTimeout(r, 200));
         if (!runningRef.current) break;
       }
-
-      try {
-        await renameOne(i);
-      } catch (e) {
+      try { await renameOne(i); }
+      catch (e) {
         console.error(e);
         setStatusMap(m => ({ ...m, [i]: { state: "error", msg: String(e?.message || e) } }));
         toast.error(String(e?.message || e));
       }
-
       setProgress(Math.round(((i + 1) / files.length) * 100));
       await new Promise(r => setTimeout(r, 30));
     }
@@ -237,24 +250,16 @@ export default function Home() {
   function stop() { setRunning(false); runningRef.current = false; setPaused(false); }
   function togglePause() { if (!runningRef.current) return; setPaused(p => !p); }
 
-  // ✅ Clear: সব রিসেট + ইনপুটও খালি
+  // Clear: সব রিসেট + ইনপুট খালি
   function clearAll(){
     setRunning(false);
     runningRef.current = false;
     setPaused(false);
-
     try { previews.forEach(p => URL.revokeObjectURL(p.url)); } catch {}
-
-    setFiles([]);
-    setPreviews([]);
-    setRenamedMap({});
-    setProgress(0);
-    setRenamedCount(0);
-    setStatusMap({});
+    setFiles([]); setPreviews([]); setRenamedMap({});
+    setProgress(0); setRenamedCount(0); setStatusMap({});
     used.current = new Set();
-
     if (fileInputRef.current) fileInputRef.current.value = "";
-
     toast.success("Cleared. You can import new files now.");
   }
 
@@ -264,7 +269,7 @@ export default function Home() {
     const zip = new JSZip();
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
-      const base = renamedMap[i] || normalizeTo5to8(f.name.replace(/\.[^.]+$/, ""));
+      const base = renamedMap[i] || normalizeTo5to8(f.name.replace(/\.[^.]+$/, ""), [f.name]);
       const ext = f.name.split(".").pop();
       const newName = `${base}.${ext}`;
       const buf = await f.arrayBuffer();
